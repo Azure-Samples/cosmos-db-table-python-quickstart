@@ -9,6 +9,7 @@ import json
 
 def runDemo(endpoint, table_name, writeOutput):
     # <create_client>
+    # Retrieves an Azure Storage token instead of Azure Cosmos DB for Table
     credential = DefaultAzureCredential()
 
     client = TableServiceClient(endpoint, credential=credential)
