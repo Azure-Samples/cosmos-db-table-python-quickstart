@@ -23,26 +23,16 @@ var tags = {
   repo: 'https://github.com/azure-samples/cosmos-db-table-python-quickstart'
 }
 
-var tableName = 'cosmicworks-products'
-
-module keyVault 'br/public:avm/res/key-vault/vault:0.10.2' = {
-  name: 'key-vault'
+module managedIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.4.0' = {
+  name: 'user-assigned-identity'
   params: {
-    name: 'key-vault-${resourceToken}'
+    name: 'managed-identity-${resourceToken}'
     location: location
-    sku: 'standard'
-    enablePurgeProtection: false
-    enableSoftDelete: false
-    publicNetworkAccess: 'Enabled'
-    enableRbacAuthorization: true
-    secrets: [
-      {
-        name: 'key-vault-secret-azure-cosmos-db-table-key'
-        value: ''
-      }
-    ]
+    tags: tags
   }
 }
+
+var tableName = 'cosmicworks-products'
 
 module cosmosDbAccount 'br/public:avm/res/document-db/database-account:0.8.1' = {
   name: 'cosmos-db-account'
@@ -57,8 +47,8 @@ module cosmosDbAccount 'br/public:avm/res/document-db/database-account:0.8.1' = 
       }
     ]
     tags: tags
-    disableKeyBasedMetadataWriteAccess: false
-    disableLocalAuth: false
+    disableKeyBasedMetadataWriteAccess: true
+    disableLocalAuth: true
     networkRestrictions: {
       publicNetworkAccess: 'Enabled'
       ipRules: []
@@ -68,13 +58,25 @@ module cosmosDbAccount 'br/public:avm/res/document-db/database-account:0.8.1' = 
       'EnableServerless'
       'EnableTable'
     ]
-    secretsExportConfiguration: {
-      keyVaultResourceId: keyVault.outputs.resourceId
-      primaryWriteKeySecretName: 'key-vault-secret-azure-cosmos-db-table-key'
-    }
+    sqlRoleDefinitions: [
+      {
+        name: 'table-data-plane-contributor'
+        dataAction: [
+          'Microsoft.DocumentDB/databaseAccounts/readMetadata' // Read account metadata
+          'Microsoft.DocumentDB/databaseAccounts/tables/*' // Manage tables
+          'Microsoft.DocumentDB/databaseAccounts/tables/containers/entities/*' // Create entities          
+        ]
+      }
+    ]
+    sqlRoleAssignmentsPrincipalIds: union(
+      [
+        managedIdentity.outputs.principalId
+      ],
+      !empty(deploymentUserPrincipalId) ? [deploymentUserPrincipalId] : []
+    )
     tables: [
       {
-        name: tableName
+        name: tableName      
       }
     ]
   }
@@ -127,34 +129,8 @@ module containerAppsEnvironment 'br/public:avm/res/app/managed-environment:0.8.0
   }
 }
 
-module managedIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.4.0' = {
-  name: 'user-assigned-identity'
-  params: {
-    name: 'managed-identity-${resourceToken}'
-    location: location
-    tags: tags
-  }
-}
-
-var keyVaultRole = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions',
-  '4633458b-17de-408a-b874-0445c86b69e6'
-) // Key Vault Secrets User built-in role
-
-module keyVaultAppAssignment 'br/public:avm/ptn/authorization/resource-role-assignment:0.1.1' = {
-  name: 'key-vault-role-assignment-secrets-user'
-  params: {
-    principalId: managedIdentity.outputs.principalId
-    resourceId: keyVault.outputs.resourceId
-    roleDefinitionId: keyVaultRole
-  }
-}
-
 module containerAppsApp 'br/public:avm/res/app/container-app:0.9.0' = {
   name: 'container-apps-app'
-  dependsOn: [
-    keyVaultAppAssignment // Need to wait for the role assignment to complete before creating the container app
-  ]
   params: {
     name: 'container-app-${resourceToken}'
     environmentResourceId: containerAppsEnvironment.outputs.resourceId
@@ -185,13 +161,8 @@ module containerAppsApp 'br/public:avm/res/app/container-app:0.9.0' = {
           value: 'https://${cosmosDbAccount.outputs.name}.table.cosmos.azure.com:443/'
         }
         {
-          name: 'azure-cosmos-db-table-account-name'
-          value: cosmosDbAccount.outputs.name
-        }
-        {
-          identity: managedIdentity.outputs.resourceId
-          name: 'azure-cosmos-db-table-write-key'
-          keyVaultUrl: cosmosDbAccount.outputs.exportedSecrets['key-vault-secret-azure-cosmos-db-table-key'].secretUri
+          name: 'user-assigned-managed-identity-client-id'
+          value: managedIdentity.outputs.clientId
         }
       ]
     }
@@ -205,20 +176,16 @@ module containerAppsApp 'br/public:avm/res/app/container-app:0.9.0' = {
         }
         env: [
           {
-            name: 'CONFIGURATION__AZURECOSMOSDB__ACCOUNTNAME'
-            secretRef: 'azure-cosmos-db-table-account-name'
-          }
-          {
             name: 'CONFIGURATION__AZURECOSMOSDB__ENDPOINT'
             secretRef: 'azure-cosmos-db-table-endpoint'
           }
           {
-            name: 'CONFIGURATION__AZURECOSMOSDB__KEY'
-            secretRef: 'azure-cosmos-db-table-write-key'
-          }
-          {
             name: 'CONFIGURATION__AZURECOSMOSDB__TABLENAME'
             value: tableName
+          }
+          {
+            name: 'AZURE_CLIENT_ID'
+            secretRef: 'user-assigned-managed-identity-client-id'
           }
         ]
       }
@@ -227,13 +194,7 @@ module containerAppsApp 'br/public:avm/res/app/container-app:0.9.0' = {
 }
 
 // Azure Cosmos DB for Table outputs
-output CONFIGURATION__AZURECOSMOSDB__ACCOUNTNAME string = cosmosDbAccount.outputs.name
 output CONFIGURATION__AZURECOSMOSDB__ENDPOINT string = 'https://${cosmosDbAccount.outputs.name}.table.cosmos.azure.com:443/'
-#disable-next-line outputs-should-not-contain-secrets // This secret is required
-output CONFIGURATION__AZURECOSMOSDB__KEY string = listKeys(
-  resourceId('Microsoft.DocumentDB/databaseAccounts', 'cosmos-db-table-${resourceToken}'),
-  '2021-04-15'
-).primaryMasterKey
 output CONFIGURATION__AZURECOSMOSDB__TABLENAME string = tableName
 
 // Azure Container Registry outputs
