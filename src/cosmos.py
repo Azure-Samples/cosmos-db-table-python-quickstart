@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 
-from azure.core.credentials import AzureNamedKeyCredential
 from azure.data.tables import TableServiceClient
+from azure.identity import DefaultAzureCredential
 
 import json
 import os
@@ -14,19 +14,11 @@ def runDemo(writeOutput):
     load_dotenv()
 
     # <create_client>
-    accountName = os.getenv("CONFIGURATION__AZURECOSMOSDB__ACCOUNTNAME")
-    if not accountName:
-        raise EnvironmentError("Azure Cosmos DB for Table account name not set.")
-
     endpoint = os.getenv("CONFIGURATION__AZURECOSMOSDB__ENDPOINT")
     if not endpoint:
         raise EnvironmentError("Azure Cosmos DB for Table account endpoint not set.")
 
-    key = os.getenv("CONFIGURATION__AZURECOSMOSDB__KEY")
-    if not key:
-        raise EnvironmentError("Azure Cosmos DB for Table write key not set.")
-
-    credential = AzureNamedKeyCredential(accountName, key)
+    credential = DefaultAzureCredential()
 
     client = TableServiceClient(endpoint=endpoint, credential=credential)
     # </create_client>
