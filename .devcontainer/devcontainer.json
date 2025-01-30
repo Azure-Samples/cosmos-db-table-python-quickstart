@@ -8,6 +8,7 @@
   "customizations": {
     "vscode": {
       "extensions": [
+        "ms-azuretools.azure-dev",
         "ms-python.python"
       ]
     }
