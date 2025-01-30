@@ -8,6 +8,8 @@
   "customizations": {
     "vscode": {
       "extensions": [
+        "ms-azuretools.azure-dev",
+        "ms-azuretools.vscode-cosmosdb",
         "ms-python.python"
       ]
     }
